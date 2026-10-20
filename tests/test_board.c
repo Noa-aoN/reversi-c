@@ -39,7 +39,7 @@ static void test_illegal_moves_are_rejected(void) {
     MT_CHECK(!rv_board_play(&b, -5));
     MT_CHECK(!rv_board_play(&b, 64));
     MT_CHECK(!rv_board_play(&b, RV_PASS));
-    MT_CHECK(memcmp(&b, &before, sizeof b) == 0);
+    MT_CHECK(b.own == before.own && b.opp == before.opp && b.side == before.side);
 }
 
 static void test_pass_only_when_no_moves(void) {
