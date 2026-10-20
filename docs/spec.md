@@ -56,7 +56,22 @@
 - 深さは `empties` で頭打ちにするので、終盤は自然に完全読みになる (石差で確定したスコア)。
 - 正しさの根拠: 枝刈りなしの参照 negamax (テスト内に実装) とランダム局面 40 件で深さ 3 のスコアが一致、
   残り 8 マス以下の局面 15 件で完全読みのスコアが一致。
-- 置換表・時間制御は段階 4。
+## 置換表と時間制御 (段階 4)
+
+- ハッシュは Zobrist ではなく `own` / `opp` を splitmix64 の finalizer で混ぜたもの。テーブル不要で
+  O(1)、局面構造体から直接計算できる。手番側視点の bitboard をそのまま鍵にするので、同じ形は
+  手番に関係なく同じエントリに当たる (Reversi のルールは色対称)。
+- エントリは `own` / `opp` を丸ごと持ち、hit は完全一致のみ。偽ヒットが原理的に起きない代わりに
+  1 エントリ 24 バイト。2^18 エントリで 6 MiB の静的配列。`RV_TT_BITS` で変更できる。
+- 置換は「同じ局面でより浅い結果は上書きしない」以外は常に上書き。
+- **値に使うのは同じ深さのエントリだけ**。深いエントリは手順前後にのみ使う。これにより固定深さの
+  評価値が置換表の有無で変わらず、枝刈りなし参照 negamax との一致テストがそのまま効く。
+  (深いエントリを値に使う方が強いが、検証可能性を優先した。切り替えは 1 行。)
+- 時間制御は反復深化 + 4096 ノードごとの時計確認。締切を過ぎたら探索を中断し、
+  直前に完了した深さの結果を使う。中断した反復の結果は置換表にも書かない。
+- 時計は C11 の `timespec_get(TIME_UTC)`。使えない環境では `clock()` に落ちる。
+- 終盤完全読みは、深さを空きマス数で頭打ちにしているので別コードなしに到達する。
+  `rv_search_result.exact` が真なら石差で確定した値。
 
 ## メモリと移植性
 
@@ -141,7 +156,25 @@ Design decisions and the reasoning behind them. Newest entries go at the bottom 
   disc-difference score.
 - Correctness: a pruning-free reference negamax (in the test file) agrees on 40 random positions at
   depth 3 and on 15 exact solves with 8 or fewer empties.
-- Transposition table and time control are stage 4.
+### Transposition table and time control (stage 4)
+
+- The hash is not Zobrist: `own` and `opp` go through the splitmix64 finaliser. No table, O(1),
+  computed straight from the position struct. Because the bitboards are side-relative, the same
+  shape hits the same entry whichever colour is to move (Reversi is colour-symmetric).
+- An entry stores the full `own` / `opp`, and a hit requires an exact match, so a false hit is
+  impossible. The cost is 24 bytes per entry; 2^18 entries is a 6 MiB static array
+  (`RV_TT_BITS`).
+- Replacement: always overwrite, except that a shallower result never replaces a deeper one for
+  the same position.
+- **Only same-depth entries are used for values**; deeper ones only seed move ordering. This keeps
+  fixed-depth scores identical with or without the table, so the pruning-free reference test still
+  applies. (Using deeper entries would be stronger; verifiability won. It is a one-line switch.)
+- Time control is iterative deepening with a clock check every 4096 nodes. Past the deadline the
+  search aborts and the last completed depth is used; the aborted iteration is not written to the
+  table.
+- The clock is C11 `timespec_get(TIME_UTC)` with a `clock()` fallback.
+- The endgame solver is not separate code: depth is capped at the number of empties, so the
+  search reaches it on its own. `rv_search_result.exact` marks a disc-difference score.
 
 ### Memory and portability rules
 
