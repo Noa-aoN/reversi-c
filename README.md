@@ -14,7 +14,7 @@
 | 1 | bitboard、合法手生成、perft | 済 |
 | 2 | CLI 対局 (人 / random / greedy)、棋譜の出力と再生 | 済 |
 | 3 | negamax + αβ、反復深化、評価関数、自己対戦 | 済 |
-| 4 | 終盤完全読み、置換表、時間制御 | 予定 |
+| 4 | 終盤完全読み、置換表、時間制御 | 済 |
 | 5 | ベンチマークと自己対戦の数値 | 予定 |
 
 ## ビルドと遊び方
@@ -23,6 +23,7 @@
 make                                  # build/reversi
 ./build/reversi play                  # 自分 (黒 X) vs ab6 (白 O、αβ 探索 6 手読み)
 ./build/reversi play human human      # 人 vs 人
+./build/reversi play human t500       # 1 手 500 ms の持ち時間で読む AI
 ./build/reversi play ab4 greedy 42    # AI 同士。第 3 引数は乱数シード
 ./build/reversi match ab6 greedy 40 1 # 自己対戦 40 局 (先後交互、序盤 4 手はランダム)
 ./build/reversi replay f5d6c3d3c4     # 棋譜を再生して局面を表示
@@ -30,7 +31,9 @@ make                                  # build/reversi
 ./build/reversi perft 9
 ```
 
-プレイヤーは `human` / `random` / `greedy` (反転数最大) / `ab[N]` (αβ 探索、N 手読み、既定 6)。
+プレイヤーは `human` / `random` / `greedy` (反転数最大) / `ab[N]` (αβ 探索、N 手読み、既定 6) /
+`t[MS]` (1 手 MS ミリ秒の反復深化、既定 1000)。AI は毎手、深さ・評価値・ノード数・速度を表示し、
+終盤で完全読みに到達すると `(exact)` が付く。
 対局中は `f5` のようにマス目を入力する。`.` が合法手、`X` が黒、`O` が白。`quit` で中断。
 打てる手がない側は自動でパスする。終局時に勝敗と棋譜 (`moves: f5d6c3...`) を表示し、
 その棋譜は `replay` にそのまま渡せる。
@@ -69,14 +72,18 @@ make bench      # perft(10) のスループット
 | ab6 vs ab2 | 97.5% | 2073 : 480 |
 | ab6 vs ab4 | 75.0% | 1634 : 916 |
 | ab8 vs ab6 (20 局) | 67.5% | 765 : 514 |
+| t200 vs ab6 (10 局) | 90.0% | 463 : 176 |
 
-深さを上げるほど勝つ、という単調性が保たれている。評価関数は角 / X / C マスの重み付け、
+深さを上げるほど勝つ、という単調性が保たれている。置換表を入れても固定深さの評価値は変わらない設計
+(同じ深さのエントリしか値に使わない) なので、上の結果は置換表の前後で同一。ab8 vs ab6 の 20 局は
+置換表で 19.1 秒 → 4.4 秒。評価関数は角 / X / C マスの重み付け、
 角が埋まったときの X・C ペナルティ解除、着手可能数の差。終局は石差で評価する。
 
 ## 設計上の制約
 
 - C11、`-Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion`、サードパーティコードなし。
-- エンジン (`src/*.c`) は `malloc` を呼ばない。局面は 24 バイトの構造体、テーブルは固定長。
+- エンジン (`src/*.c`) は `malloc` を呼ばない。局面は 24 バイトの構造体。置換表は 2^18 エントリの
+  静的配列 (`RV_TT_BITS` でサイズ変更可) で、ハッシュ衝突時は局面を完全一致で照合する。
 - 盤面は手番側から見た 2 本の `uint64_t` bitboard。合法手生成と反転は 8 方向の
   shift + mask の flood 走査で、マスごとのループを持たない。
 - テストはヘッダ 1 つ (`tests/minitest.h`) で完結。CI は gcc / clang それぞれで
@@ -106,7 +113,7 @@ make bench      # perft(10) のスループット
 ## 構成
 
 ```
-include/reversi/   公開ヘッダ (bitboard, movegen, board, perft, player, eval, search)
+include/reversi/   公開ヘッダ (bitboard, movegen, board, perft, player, eval, search, tt)
 src/               エンジン
 src/cli/           コマンドラインのフロントエンド
 tests/             minitest.h + test_*.c
@@ -132,7 +139,7 @@ allocation in the engine, and every piece of game logic is pinned down by perft.
 | 1 | Bitboard, move generation, perft | done |
 | 2 | CLI play (human / random / greedy), transcript output and replay | done |
 | 3 | Negamax + alpha-beta, iterative deepening, evaluation, self-play | done |
-| 4 | Endgame exact solver, transposition table, time control | planned |
+| 4 | Endgame exact solver, transposition table, time control | done |
 | 5 | Benchmarks and self-play results | planned |
 
 ### Build and play
@@ -141,6 +148,7 @@ allocation in the engine, and every piece of game logic is pinned down by perft.
 make                                  # build/reversi
 ./build/reversi play                  # you (black, X) vs ab6 (white, O, alpha-beta, 6 plies)
 ./build/reversi play human human
+./build/reversi play human t500       # engine thinks 500 ms per move
 ./build/reversi play ab4 greedy 42    # engine vs engine; third arg is the RNG seed
 ./build/reversi match ab6 greedy 40 1 # 40-game self-play, colors alternate, 4 random opening plies
 ./build/reversi replay f5d6c3d3c4     # replay a transcript and show the position
@@ -148,7 +156,9 @@ make                                  # build/reversi
 ./build/reversi perft 9
 ```
 
-Players are `human`, `random`, `greedy` (most flips) and `ab[N]` (alpha-beta, N plies, default 6).
+Players are `human`, `random`, `greedy` (most flips), `ab[N]` (alpha-beta, N plies, default 6)
+and `t[MS]` (iterative deepening for MS milliseconds per move, default 1000). The engine prints
+depth, score, nodes and speed for every move, with `(exact)` once the endgame is solved.
 Enter squares like `f5`. `.` marks legal moves, `X` is black, `O` is white, `quit` stops the game.
 A side with no legal move passes automatically. At the end the result and the transcript
 (`moves: f5d6c3...`) are printed; the transcript can be fed straight back into `replay`.
@@ -172,14 +182,19 @@ Win rate is for the left-hand player, draws count 0.5.
 | ab6 vs ab2 | 97.5% | 2073 : 480 |
 | ab6 vs ab4 | 75.0% | 1634 : 916 |
 | ab8 vs ab6 (20 games) | 67.5% | 765 : 514 |
+| t200 vs ab6 (10 games) | 90.0% | 463 : 176 |
 
-Deeper search wins, monotonically. The evaluation weights corners, X and C squares (penalties
+Deeper search wins, monotonically. The transposition table only uses entries of the same depth
+for values, so fixed-depth scores are unchanged by it and the results above are identical with
+and without it; the 20-game ab8 vs ab6 match drops from 19.1 s to 4.4 s. The evaluation weights corners, X and C squares (penalties
 lifted once the adjacent corner is taken) and mobility; finished games are scored by disc difference.
 
 ### Design constraints
 
 - C11, `-Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion`, zero third-party code.
-- The engine (`src/*.c`) never calls `malloc`. State is a 24-byte struct; tables are fixed size.
+- The engine (`src/*.c`) never calls `malloc`. State is a 24-byte struct. The transposition
+  table is a static array of 2^18 entries (`RV_TT_BITS`), and a hit requires the full position
+  to match, so hash collisions can never return a wrong entry.
 - Board is two `uint64_t` bitboards from the side-to-move's point of view. Move generation and
   flipping are shift-and-mask flood passes over 8 directions, with no per-square loop.
 - Tests are a single header (`tests/minitest.h`); CI runs gcc and clang, each with and without
@@ -195,7 +210,7 @@ a finished game is one leaf. Depths 1 to 10 match the published reference values
 ### Layout
 
 ```
-include/reversi/   public headers (bitboard, movegen, board, perft, player, eval, search)
+include/reversi/   public headers (bitboard, movegen, board, perft, player, eval, search, tt)
 src/               engine
 src/cli/           command-line front end
 tests/             minitest.h + test_*.c
