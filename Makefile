@@ -26,7 +26,7 @@ $(BUILD)/test_%: tests/test_%.c $(LIB_OBJ)
 	@mkdir -p $(@D)
 	$(CC) $(WARN) $(CFLAGS) $(CPPFLAGS) -Itests -o $@ $^ $(LDFLAGS)
 
-$(BUILD)/bench_perft: bench/bench_perft.c $(LIB_OBJ)
+$(BUILD)/bench_%: bench/bench_%.c $(LIB_OBJ)
 	@mkdir -p $(@D)
 	$(CC) $(WARN) $(CFLAGS) $(CPPFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -41,8 +41,9 @@ valgrind: $(TEST_BIN)
 		valgrind -q --error-exitcode=1 --leak-check=full ./$$t || exit 1; \
 	done
 
-bench: $(BUILD)/bench_perft
+bench: $(BUILD)/bench_perft $(BUILD)/bench_search
 	./$(BUILD)/bench_perft
+	./$(BUILD)/bench_search
 
 clean:
 	rm -rf $(BUILD)
