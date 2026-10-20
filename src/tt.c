@@ -29,6 +29,8 @@ void rv_tt_clear(rv_tt *tt) {
     }
 }
 
+/* The entry keeps the whole position, not just the hash, so a collision can
+ * only cost a miss and never returns another position's score. */
 const rv_tt_entry *rv_tt_probe(const rv_tt *tt, const rv_board *b, uint64_t hash) {
     const rv_tt_entry *e = &tt->entries[hash & tt->mask];
     if (e->used && e->own == b->own && e->opp == b->opp) {

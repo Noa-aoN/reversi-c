@@ -121,6 +121,9 @@ static int negamax(ctx *c, const rv_board *b, int depth, int alpha, int beta) {
     }
     rv_bb moves = rv_board_moves(b);
     if (moves == 0) {
+        /* A pass keeps the remaining depth: the value of (position, depth)
+         * must not depend on how many passes led here, or the table and the
+         * reference search would disagree. */
         rv_board next = *b;
         rv_board_pass(&next);
         if (rv_board_moves(&next) == 0) {
@@ -132,6 +135,9 @@ static int negamax(ctx *c, const rv_board *b, int depth, int alpha, int beta) {
         return rv_eval(b);
     }
 
+    /* Only a same-depth entry may supply a value. Deeper entries would be
+     * stronger, but then fixed-depth scores would depend on table contents and
+     * the comparison against the pruning-free reference search would break. */
     uint64_t hash = rv_hash(b);
     const rv_tt_entry *e = rv_tt_probe(&tt, b, hash);
     int first = -1;
