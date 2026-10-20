@@ -41,6 +41,23 @@
 - 棋譜は `f5d6c3...` の連結文字列。パスは記録しない (`replay` が必要に応じて自動パスを挟むため)。
 - `MAX_PLIES = 128` の固定長配列に履歴を持つ。実際の上限は 60 手 + パスなので十分。
 
+## 評価関数 (段階 3)
+
+- 手番側から見たスコア。マスを重み別の bitmask (角 100 / X -50 / C -20 / A 10 / B 5 / 内周 -2 / 中央 -1)
+  に分け、`popcount(own & mask) - popcount(opp & mask)` の加重和で求める。64 マスのループを持たない。
+- 角が埋まったら、その角に隣接する X / C マスのペナルティを打ち消す (角が取られた後の X は危険ではない)。
+- 着手可能数の差 × 8。終局は石差 × 1000 (`RV_SCORE_DISC`) で、静的評価を必ず支配する。
+- 反転対称 (`eval(b) == -eval(swap(b))`) をランダム局面でテストしている。
+
+## 探索 (段階 3)
+
+- negamax + αβ。パスは深さを消費しない (両者パスは終局として石差を返す)。
+- 手順前後: 角 → 普通のマス → C → X の 4 バケツ順に探索する。反復深化では前回の最善手を最初に読む。
+- 深さは `empties` で頭打ちにするので、終盤は自然に完全読みになる (石差で確定したスコア)。
+- 正しさの根拠: 枝刈りなしの参照 negamax (テスト内に実装) とランダム局面 40 件で深さ 3 のスコアが一致、
+  残り 8 マス以下の局面 15 件で完全読みのスコアが一致。
+- 置換表・時間制御は段階 4。
+
 ## メモリと移植性
 
 - `src/*.c` でヒープ確保をしない。`rv_board` は探索中に値コピーする。
@@ -104,6 +121,27 @@ Design decisions and the reasoning behind them. Newest entries go at the bottom 
 - Transcript is the concatenated string `f5d6c3...`. Passes are not recorded; `replay` inserts
   them when needed.
 - History lives in a fixed `MAX_PLIES = 128` array; the real bound is 60 moves plus passes.
+
+### Evaluation (stage 3)
+
+- Score from the side to move. Squares are grouped into weight-class bitmasks (corner 100 / X -50 /
+  C -20 / A 10 / B 5 / inner ring -2 / center -1) and summed as
+  `popcount(own & mask) - popcount(opp & mask)`. No 64-square loop.
+- Once a corner is occupied, the X and C penalties next to it are cancelled.
+- Mobility difference x 8. Finished games score disc difference x 1000 (`RV_SCORE_DISC`), which
+  always dominates the static terms.
+- Antisymmetry (`eval(b) == -eval(swap(b))`) is tested on random positions.
+
+### Search (stage 3)
+
+- Negamax with alpha-beta. A pass does not consume depth; two passes are a terminal node.
+- Move ordering in four buckets: corners, ordinary squares, C squares, X squares. Iterative
+  deepening searches the previous best move first at the root.
+- Depth is capped at the number of empties, so the endgame becomes an exact solve with a
+  disc-difference score.
+- Correctness: a pruning-free reference negamax (in the test file) agrees on 40 random positions at
+  depth 3 and on 15 exact solves with 8 or fewer empties.
+- Transposition table and time control are stage 4.
 
 ### Memory and portability rules
 
