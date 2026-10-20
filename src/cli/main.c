@@ -8,19 +8,21 @@
 #include "reversi/player.h"
 #include "reversi/search.h"
 
-typedef enum player_kind { HUMAN, RANDOM, GREEDY, AB } player_kind;
+typedef enum player_kind { HUMAN, RANDOM, GREEDY, AB, TIMED } player_kind;
 
 typedef struct player {
     player_kind kind;
     int depth;
+    double seconds;
 } player;
 
 #define MAX_PLIES 128
 #define DEFAULT_DEPTH 6
+#define DEFAULT_MS 1000
 
 static int usage(void) {
     fprintf(stderr,
-            "usage: reversi play [black] [white] [seed]      player: human|random|greedy|ab[N]\n"
+            "usage: reversi play [black] [white] [seed]      player: human|random|greedy|ab[N]|t[MS]\n"
             "       reversi match <a> <b> <games> [seed]     self-play, colors alternate\n"
             "       reversi replay <moves>                   e.g. f5d6c3d3c4\n"
             "       reversi show\n"
@@ -41,6 +43,14 @@ static int parse_player(const char *s, player *out) {
         if (out->depth < 1 || out->depth > RV_SEARCH_MAX_DEPTH) {
             return 0;
         }
+    } else if (s[0] == 't') {
+        int ms = s[1] ? atoi(s + 1) : DEFAULT_MS;
+        if (ms < 1) {
+            return 0;
+        }
+        out->kind = TIMED;
+        out->depth = RV_SEARCH_MAX_DEPTH;
+        out->seconds = ms / 1000.0;
     } else {
         return 0;
     }
@@ -48,9 +58,11 @@ static int parse_player(const char *s, player *out) {
 }
 
 static void describe(const player *p, char *out, size_t cap) {
-    static const char *names[] = {"human", "random", "greedy", "ab"};
+    static const char *names[] = {"human", "random", "greedy", "ab", "t"};
     if (p->kind == AB) {
         snprintf(out, cap, "ab%d", p->depth);
+    } else if (p->kind == TIMED) {
+        snprintf(out, cap, "t%d", (int)(p->seconds * 1000.0 + 0.5));
     } else {
         snprintf(out, cap, "%s", names[p->kind]);
     }
@@ -118,10 +130,15 @@ static int pick_move(const player *p, const rv_board *b, rv_rng *rng, int verbos
     case GREEDY:
         return rv_pick_greedy(b);
     default:
-        rv_search_id(b, p->depth, &res);
+        if (p->kind == TIMED) {
+            rv_search_timed(b, p->depth, p->seconds, &res);
+        } else {
+            rv_search_id(b, p->depth, &res);
+        }
         if (verbose) {
-            printf("depth %d  score %+d  nodes %llu\n", res.depth, res.score,
-                   (unsigned long long)res.nodes);
+            printf("depth %d%s  score %+d  nodes %llu  %.2fs  %.1f Mn/s\n", res.depth,
+                   res.exact ? " (exact)" : "", res.score, (unsigned long long)res.nodes,
+                   res.seconds, res.seconds > 0 ? (double)res.nodes / res.seconds / 1e6 : 0.0);
         }
         return res.move;
     }
@@ -263,7 +280,7 @@ int main(int argc, char **argv) {
         return cmd_replay(argv[2]);
     }
     if (strcmp(argv[1], "play") == 0 && argc <= 5) {
-        player players[2] = {{HUMAN, 0}, {AB, DEFAULT_DEPTH}};
+        player players[2] = {{HUMAN, 0, 0.0}, {AB, DEFAULT_DEPTH, 0.0}};
         if (argc >= 3 && !parse_player(argv[2], &players[RV_BLACK])) {
             return usage();
         }

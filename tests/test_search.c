@@ -50,6 +50,7 @@ static void random_position(rv_board *b, rv_rng *r, int plies) {
 static void test_alpha_beta_matches_plain_negamax(void) {
     rv_rng r;
     rv_rng_seed(&r, 11);
+    rv_search_clear_tt();
     for (int g = 0; g < 40; g++) {
         rv_board b;
         rv_search_result res;
@@ -105,6 +106,40 @@ static void test_takes_winning_move_in_endgame(void) {
     MT_CHECK(res.score == 6 * RV_SCORE_DISC);
 }
 
+static void test_tt_does_not_change_fixed_depth_scores(void) {
+    rv_rng r;
+    rv_rng_seed(&r, 17);
+    for (int g = 0; g < 10; g++) {
+        rv_board b;
+        rv_search_result cold, warm;
+        random_position(&b, &r, 10 + (int)(rv_rng_next(&r) % 30));
+        if (rv_board_moves(&b) == 0) {
+            continue;
+        }
+        rv_search_clear_tt();
+        rv_search(&b, 5, &cold);
+        rv_search(&b, 5, &warm);
+        MT_CHECK(cold.score == warm.score);
+        MT_CHECK(warm.nodes < cold.nodes);
+        MT_CHECK(cold.score == reference_negamax(&b, 5));
+    }
+}
+
+static void test_timed_search_respects_deadline(void) {
+    rv_board b;
+    rv_search_result res;
+    rv_board_init(&b);
+    rv_search_clear_tt();
+    rv_search_timed(&b, 60, 0.05, &res);
+    MT_CHECK(res.seconds < 0.5);
+    MT_CHECK(res.depth >= 1 && res.depth < 60);
+    MT_CHECK((rv_board_moves(&b) & RV_BB(res.move)) != 0);
+    MT_CHECK(!res.exact);
+    rv_board late = {B("a1") | B("b1") | B("c1") | B("d1"), B("e1"), RV_BLACK};
+    rv_search_timed(&late, 60, 1.0, &res);
+    MT_CHECK(res.exact && res.move == SQ("f1"));
+}
+
 static void test_search_beats_greedy(void) {
     rv_rng r;
     rv_rng_seed(&r, 2026);
@@ -136,6 +171,8 @@ int main(void) {
     MT_RUN(test_endgame_is_solved_exactly);
     MT_RUN(test_iterative_deepening_reports_depth_and_legal_move);
     MT_RUN(test_takes_winning_move_in_endgame);
+    MT_RUN(test_tt_does_not_change_fixed_depth_scores);
+    MT_RUN(test_timed_search_respects_deadline);
     MT_RUN(test_search_beats_greedy);
     return mt_report("test_search");
 }
