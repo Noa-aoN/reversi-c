@@ -53,7 +53,7 @@ bench: $(BUILD)/bench_perft $(BUILD)/bench_search
 
 $(BUILD)/cross/%.o: src/%.c
 	@mkdir -p $(@D)
-	$(CROSS)gcc $(WARN) $(MCU) -Os $(CPPFLAGS) -c -o $@ $<
+	$(CROSS)gcc $(WARN) $(MCU) -Os $(CPPFLAGS) -DRV_TT_BITS=10 -c -o $@ $<
 
 cross: $(CROSS_OBJ)
 	$(CROSS)size -t $^

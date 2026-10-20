@@ -110,6 +110,8 @@ AI の種類は `random` / `greedy` (反転数が最大の手) / `ab[N]` (N 手�
 
 `t[MS]` は反復深化を回しながら 4096 ノードごとに時計を見て、締切を過ぎたら探索を打ち切り、
 直前に読み終えた深さの結果を使います。打ち切った途中の結果は置換表に書きません。
+時計はエンジンが持たず、ホストが `rv_search_set_clock` で関数を渡します (CLI は `timespec_get`、
+既定は C89 の `clock()`)。マイコンでは SysTick を読む関数を渡すだけで済みます。
 
 ## 強さと速さ
 
@@ -133,24 +135,28 @@ AI の種類は `random` / `greedy` (反転数が最大の手) / `ab[N]` (N 手�
 | 探索 (8 手読み x 20 局面) | 12 M ノード/秒 |
 | ab8 vs ab6 の 20 局 | 19.1 秒 → 3.1 秒 (置換表 + 合法手生成の改善) |
 
-エンジン部分のコードサイズは `-Os` で約 7 KB です (置換表を除く)。
+エンジン部分を Cortex-M4 向けに `-Os` でビルドすると、コードは 5.0 KB、RAM は置換表込みで 25 KB です
+(`RV_TT_BITS=10`、CI の `cross` ジョブで毎回計測)。
 
 ## どう確かめているか
 
 ```sh
 make test       # 単体テスト + perft(0..9) + 参照探索との一致
+make smoke      # CLI の各サブコマンドを 1 回ずつ通す
 make asan       # 同じテストを AddressSanitizer + UBSan で
 make bench      # perft(10) と探索のスループット
+make cross      # arm-none-eabi-gcc で Cortex-M4 向けにエンジンをビルドしサイズを表示
 ```
 
 CI は gcc と clang でそれぞれ通常ビルドと ASan/UBSan ビルドを回し、さらに valgrind でも全テストを通します。
+Cortex-M4 向けのクロスビルドも CI に入れていて、「マイコンに載る」が言葉だけにならないようにしています。
 テストはヘッダ 1 つの自作フレームワーク (`tests/minitest.h`) で、外部に依存しません。
 
 ## 今後
 
 エンジンは UI も OS も前提にしていないので、そのまま別の場所へ持っていけます。
 
-- マイコンへの移植。`RV_TT_BITS=10` で置換表は 24 KB になり、Cortex-M クラスで動く見込み。
+- マイコンへの移植。Cortex-M4 向けビルドは CI で通っていて、残るのは UART で手をやり取りする薄い層と時計関数だけ。
 - WASM にしてブラウザで対局 (別リポで)。
 - 標準入出力の対戦プロトコルを付け、他のエンジンや GUI と接続して強さを測る。
 - 自己対戦の棋譜から評価関数の重みを学習する。
@@ -210,23 +216,26 @@ Enter squares like `f5`; `.` marks legal moves; `quit` stops. Players: `random`,
    only miss. Only same-depth entries supply values, which keeps fixed-depth scores independent
    of the table and the reference-search test valid.
 7. **Time control**: iterative deepening, clock checked every 4096 nodes, last completed depth
-   wins; aborted iterations are not stored.
+   wins; aborted iterations are not stored. The engine owns no clock: the host passes one with
+   `rv_search_set_clock` (the CLI uses `timespec_get`, the default is C89 `clock()`).
 
 ### Strength and speed
 
 Self-play (40 games, seed 1, alternating colors, 4 random opening plies): ab4 and ab6 beat greedy
 100%, ab6 beats ab4 75%, ab8 beats ab6 67.5% (20 games), t200 beats ab6 90% (10 games).
-Perft runs at 48 M leaves/s, search at 12 M nodes/s (Apple M-series core, `-O2`). The engine is
-about 7 KB of code at `-Os`, excluding the table.
+Perft runs at 48 M leaves/s, search at 12 M nodes/s (Apple M-series core, `-O2`). Built for
+Cortex-M4 at `-Os` the engine is 5.0 KB of code and 25 KB of RAM including the table
+(`RV_TT_BITS=10`), measured by the `cross` job on every push.
 
 ### Verification
 
-`make test` (unit tests, perft, reference search), `make asan`, `make bench`. CI runs gcc and
-clang with and without ASan/UBSan, plus valgrind.
+`make test` (unit tests, perft, reference search), `make smoke` (CLI), `make asan`, `make bench`,
+`make cross` (Cortex-M4 build). CI runs gcc and clang with and without ASan/UBSan, valgrind, and
+the cross build.
 
 ### Where it can go
 
-MCU port (`RV_TT_BITS=10` makes the table 24 KB), WASM build in a separate repo, a stdio match
+MCU port (the Cortex-M4 build already passes in CI), WASM build in a separate repo, a stdio match
 protocol for playing other engines, and learning evaluation weights from self-play. See
 `docs/spec.md`.
 
