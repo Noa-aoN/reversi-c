@@ -1,0 +1,15 @@
+build/
+docs/notes/
+
+.DS_Store
+._*
+.vscode/
+.idea/
+*.swp
+
+*.o
+*.a
+*.out
+a.out
+*.dSYM/
+core
