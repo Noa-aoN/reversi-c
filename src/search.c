@@ -30,12 +30,16 @@ typedef struct ctx {
     bool aborted;
 } ctx;
 
-static double now_seconds(void) {
-    struct timespec ts;
-    if (timespec_get(&ts, TIME_UTC) != TIME_UTC) {
-        return (double)clock() / CLOCKS_PER_SEC;
-    }
-    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+/* clock() is C89 and exists on every libc including newlib, so the engine
+ * builds unchanged for an MCU; the host swaps in a real wall clock. */
+static double cpu_seconds(void) {
+    return (double)clock() / CLOCKS_PER_SEC;
+}
+
+static rv_clock_fn now_seconds = cpu_seconds;
+
+void rv_search_set_clock(rv_clock_fn fn) {
+    now_seconds = fn ? fn : cpu_seconds;
 }
 
 static void ensure_tt(void) {

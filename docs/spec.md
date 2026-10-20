@@ -79,12 +79,19 @@
 
 - 反復深化 + 4096 ノードごとの時計確認。締切を過ぎたら探索を中断し、直前に完了した深さの結果を使います。
   中断した反復の結果は置換表にも書きません。
-- 時計は C11 の `timespec_get(TIME_UTC)`。使えない環境では `clock()` に落ちます。
+- 時計はエンジンが持たず、`rv_search_set_clock` でホストから秒を返す関数を受け取ります。既定は C89 の
+  `clock()` で、CLI は `timespec_get` の壁時計を渡します。最初は `timespec_get` を直接呼んでいましたが、
+  newlib (arm-none-eabi) にはなく Cortex-M4 ビルドが通らなかったので、この形にしました。
+  テストでは偽の時計を渡して、締切超過で直前の深さの結果が返ることを決定的に確かめています。
 
 ## テスト方針
 
 - `tests/minitest.h` はカウンタと 2 つのマクロだけ。動的登録も setjmp もありません。
 - `tests/test_*.c` はそれぞれ独立した実行ファイルで、`make test` が全部回して最初の失敗で止まります。
+- CLI は `tests/smoke.sh` で各サブコマンドを 1 回ずつ通します (`make smoke`)。エンジンの正しさは
+  単体テストで見るので、ここは引数の解釈と出力の形だけを見ます。
+- `make cross` は arm-none-eabi-gcc でエンジンだけを Cortex-M4 向けにコンパイルし、`size` を出します。
+  CI でも回していて、移植性の主張をビルドで裏付けています。
 - 構造体の等値比較は `memcmp` ではなくフィールドで行います。`rv_board` は enum の後ろに
   パディングがあり、CI の valgrind が未初期化読みとして検出しました。
 - 乱数は `rand()` ではなく自前の xorshift64* です。シードを固定すればどの libc でも同じ棋譜になり、
@@ -100,7 +107,7 @@ Apple M 系 1 コア、`-O2`。
 | 置換表 | 同じ | 4.4 s |
 | Kogge-Stone 充填 | 0.51 s (48 M/s) | 3.1 s |
 
-探索は 8 手読み x 20 局面で 12 M ノード/秒 (`make bench`)。エンジンのコードサイズは `-Os` で約 7 KB
+探索は 8 手読み x 20 局面で 12 M ノード/秒 (`make bench`)。エンジンのコードサイズは Cortex-M4 向け `-Os` で 5.0 KB
 (置換表を除く)。
 
 ## 今後の活用
@@ -113,8 +120,11 @@ Apple M 系 1 コア、`-O2`。
 - 必要なのは `src/*.c` のうち CLI 以外と `include/`。`printf` を使うのは盤面整形だけです。
 - RAM の見積もり: 局面 24 バイト、探索の再帰は最大 60 段で数 KB、置換表は `RV_TT_BITS=10` で 24 KB。
   Cortex-M4 (RAM 64 KB 程度) で十分収まります。置換表を外せば 10 KB 未満です。
-- コードは `-Os` で約 7 KB。`popcount` / `ctz` は GCC 拡張を使っていますが、`#if` の外側に
-  移植可能な実装があるので、どのコンパイラでもビルドできます。
+- コードは Cortex-M4 向け `-Os` で 5.0 KB (text)、RAM は `RV_TT_BITS=10` で 25 KB (bss)。CI の
+  `cross` ジョブが毎回この構成でビルドして `size` を出します。`popcount` / `ctz` は GCC 拡張を
+  使っていますが、`#if` の外側に移植可能な実装があるので、どのコンパイラでもビルドできます。
+- 時計は `rv_search_set_clock` に SysTick などを読む関数を渡します。それ以外に OS や libc に
+  依存している箇所はありません (`snprintf` は盤面整形のみ)。
 - 実機で動かすなら、UART 経由で盤面と手をやり取りする薄い層を足すだけです。
   「PC の CLI と同じコードがマイコンでも同じ手を返す」ことが一番分かりやすいデモになります。
 
@@ -204,26 +214,31 @@ make fixed-depth scores depend on table contents and break the reference test. V
 ### Time control
 
 Iterative deepening with a clock check every 4096 nodes; past the deadline the search aborts
-and the last completed depth is used; aborted iterations are not stored. Clock is C11
-`timespec_get` with a `clock()` fallback.
+and the last completed depth is used; aborted iterations are not stored. The engine owns no
+clock: `rv_search_set_clock` takes a seconds function from the host (default C89 `clock()`, the
+CLI passes `timespec_get`). The first version called `timespec_get` directly, which newlib does
+not have, so the Cortex-M4 build failed; a test with a fake clock now checks the abort path
+deterministically.
 
 ### Testing
 
 One-header framework, one executable per test file, field-by-field struct comparison (valgrind
 caught a padding read through `memcmp`), in-tree xorshift64* so seeded self-play is
-deterministic on every libc.
+deterministic on every libc. `make smoke` runs every CLI subcommand once; `make cross` compiles
+the engine for Cortex-M4 with arm-none-eabi-gcc and prints `size`, in CI as well.
 
 ### Performance log
 
 Apple M-series core, `-O2`: perft(10) 0.91 s to 0.51 s (26 to 48 M leaves/s) with Kogge-Stone;
 20-game ab8 vs ab6 match 19.1 s to 4.4 s with the table, to 3.1 s with the new generator; search
-12 M nodes/s at depth 8; engine code about 7 KB at `-Os`.
+12 M nodes/s at depth 8; engine code 5.0 KB at `-Os` for Cortex-M4, 25 KB RAM with `RV_TT_BITS=10`.
 
 ### Where it can go
 
 1. **MCU port**: engine only, no `printf` outside the formatter; 24-byte position, a few KB of
-   stack, 24 KB table at `RV_TT_BITS=10`; fits a Cortex-M4. The best demo is the same code
-   returning the same moves over UART as on the PC.
+   stack, 24 KB table at `RV_TT_BITS=10`; the Cortex-M4 build passes in CI. What remains is a
+   clock function and a thin UART layer. The best demo is the same code returning the same
+   moves over UART as on the PC.
 2. **WASM**: expose a handful of functions via Emscripten and drive them from a thin TypeScript
    board, in a separate repository to keep this one dependency-free and C-only.
 3. **Match protocol**: a minimal GTP-style stdio protocol to play other engines and GUIs, which

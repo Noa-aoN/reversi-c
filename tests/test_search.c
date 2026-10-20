@@ -140,6 +140,29 @@ static void test_timed_search_respects_deadline(void) {
     MT_CHECK(res.exact && res.move == SQ("f1"));
 }
 
+static double fake_now;
+
+static double fake_clock(void) {
+    fake_now += 10.0;
+    return fake_now;
+}
+
+static void test_timed_search_uses_host_clock(void) {
+    rv_board b;
+    rv_search_result res, full;
+    rv_board_init(&b);
+    rv_search_clear_tt();
+    fake_now = 0.0;
+    rv_search_set_clock(fake_clock);
+    rv_search_timed(&b, 8, 1.0, &res);
+    rv_search_set_clock(NULL);
+    MT_CHECK(res.depth >= 1 && res.depth < 8);
+    MT_CHECK((rv_board_moves(&b) & RV_BB(res.move)) != 0);
+    rv_search_clear_tt();
+    rv_search_id(&b, res.depth, &full);
+    MT_CHECK(full.score == res.score);
+}
+
 static void test_search_beats_greedy(void) {
     rv_rng r;
     rv_rng_seed(&r, 2026);
@@ -173,6 +196,7 @@ int main(void) {
     MT_RUN(test_takes_winning_move_in_endgame);
     MT_RUN(test_tt_does_not_change_fixed_depth_scores);
     MT_RUN(test_timed_search_respects_deadline);
+    MT_RUN(test_timed_search_uses_host_clock);
     MT_RUN(test_search_beats_greedy);
     return mt_report("test_search");
 }
