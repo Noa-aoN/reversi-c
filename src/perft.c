@@ -6,6 +6,8 @@ uint64_t rv_perft(const rv_board *b, int depth) {
     if (depth == 0) {
         return 1;
     }
+    /* Reference counts (Aart Bik) treat a forced pass as one ply and a finished
+     * game as one leaf; depth 10 is the first that distinguishes the variants. */
     rv_bb moves = rv_legal_moves(b->own, b->opp);
     if (moves == 0) {
         if (rv_legal_moves(b->opp, b->own) == 0) {

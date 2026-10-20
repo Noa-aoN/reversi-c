@@ -1,193 +1,234 @@
 # reversi-c spec
 
-設計判断とその理由。各節とも新しい項目を下に足す。
+設計判断とその理由、性能の記録、今後の活用の考察。README が「流れ」なら、こちらは「なぜそうしたか」です。
 
 [English](#english)
 
+## 目的と制約
+
+このリポジトリの目的は、組み込みで書いてきた C を公開の形にすることです。だから UI より中身、
+見た目より検証に寄せています。最初に決めて最後まで守った制約は次の 3 つです。
+
+1. 外部ライブラリを使わない。テストフレームワークも自作のヘッダ 1 つ。
+2. エンジンはヒープを使わない。固定長の配列と値コピーだけで動く。
+3. 正しさは機械で確かめる。perft の参照値、枝刈りなしの参照探索、ASan / UBSan / valgrind。
+
+制約 2 は性能のためというより、移植性と見積もりのためです。ヒープがなければ RAM 使用量は
+リンク時に決まり、マイコンに持っていくときにそのまま読めます。
+
 ## 盤面表現
 
-- 手番側から見た `own` / `opp` の 2 本の `uint64_t` と、絶対色を復元するための `side`。
-  着手時に 2 本を入れ替えるので、探索コードは色で分岐しない。
-- マス番号は `rank * 8 + file`、`a1 = 0`、`h8 = 63`。表示上の上から下が rank 1 → 8 で、
-  一般的なオセロ棋譜 (`f5` が定番の初手) と一致する。
-- 方向シフトは、折り返す file をマスクで落とす (東向きなら `~FILE_A`、西向きなら `~FILE_H`)。
-  南北は語長から自然にこぼれる。
+- `own` / `opp` の 2 本の `uint64_t`。常に手番側から見た形にし、絶対色は `side` で持ちます。
+  着手は「反転して入れ替える」だけで、探索コードに色の分岐がありません。
+- マス番号は `rank * 8 + file`、`a1 = 0`、`h8 = 63`。画面の上が rank 1 です。
+  一般的な棋譜表記 (`f5` が定番の初手) と一致します。
+- 局面は 24 バイトなので、探索中は undo を持たず値コピーで子局面を作ります。
+  undo の実装ミスという定番のバグをそもそも作らない選択です。
 
-## 合法手生成と反転
+## 合法手生成 (Kogge-Stone)
 
-- 合法手: 8 方向それぞれで `own` を `opp` 上に最大 6 回流し、最後に 1 回シフトして空マスに乗せる。
-  マスごとのループを持たない。
-- 反転: 着手ビットから同じ流し方をし、最後のシフトが `own` に当たった方向だけ採用する。
-- マスごとのループなしで正しい最も単純な形。Kogge-Stone 型の並列プレフィックス版の方が速いので、
-  ベンチ段階で置き換え候補。
+- 「相手石が続き、その先に自分の石」という条件を 8 方向分、bitboard 全体に対して一度に求めます。
+- 相手石の上を流す処理は occluded fill と呼ばれる並列プレフィックスで、1, 2, 4 マスのシフト 3 回で
+  最長 6 個の相手石をたどれます。初版は 1 マスずつ 6 回流していたので、シフト回数は半分になりました。
+- 盤の端をまたがないよう、n マスのシフトでは n 列ぶんをマスクで落とします (東向きなら a 列側、
+  西向きなら h 列側)。南北のシフトは語長からこぼれるので何もしません。
+- 置き換えの正しさは perft で確認しました。1〜10 手の値が置き換えの前後で同一です。
 
-## perft の意味論
+## perft の定義
 
-- `perft(0) = 1`。パスは 1 手として数える。両者とも打てない局面は残り深さに関係なく 1 葉。
-- この規則で参照列 4, 12, 56, 244, 1396, 8200, 55092, 390216, 3005288, 24571284 (1〜10 手) と一致。
-  最短ゲームが 9 手なので、10 手目で初めてパス規則と終局規則の両方が効く。
-  ここが一致することで両方の選択が固定される。
+- `perft(0) = 1`。
+- 手番側に合法手がなく相手にはある場合、パスを 1 手と数える。
+- 両者とも打てない局面は、残り深さに関係なく 1 局面と数える。
+- この定義で参照列 4, 12, 56, 244, 1396, 8200, 55092, 390216, 3005288, 24571284 (1〜10 手) と
+  一致します。最短の終局が 9 手なので、10 手目ではじめてパスと終局の扱いが数に現れます。
+  10 手目まで一致したことで、定義そのものが固定されています。
 
-## プレイヤー (段階 2)
+## 探索
 
-- `random`: xorshift64* を自前で持つ。`rand()` を使わないのは、シードを与えれば
-  どの libc でも同じ棋譜になるようにするため (再現テストと将来の自己対戦で必要)。
-- `greedy`: 反転数最大の手。同点はマス番号が小さい方 (決定的)。探索の基準線として残す。
-- どちらも合法手がなければ `RV_PASS` を返し、パスの判断は呼び出し側 (CLI / 探索) が行う。
+- negamax + αβ。パスは深さを消費しません。(局面, 深さ) の値がそこまでの経路に依存しないように
+  するためで、置換表と参照探索の一致にも必要な条件です。両者パスは終局として石差を返します。
+- 手順前後は角 → 普通のマス → C → X の 4 バケツ。反復深化では前回の最善手を最初に読みます。
+- 深さは空きマス数で頭打ちにしています。終盤の完全読みに別のコードはなく、同じ探索が
+  自然に読み切ります。読み切った結果は `rv_search_result.exact` で分かります。
+- 正しさは、枝刈りなしの参照 negamax (テスト内に実装) と、ランダム局面 40 件 (深さ 3)、
+  残り 8 マス以下の局面 15 件 (読み切り) でスコアが一致することで確認しています。
 
-## CLI
+## 評価関数
 
-- 盤面は `X` 黒 / `O` 白 / `.` 合法手 / `-` 空き。手番がなければ自動パスして表示する。
-- 棋譜は `f5d6c3...` の連結文字列。パスは記録しない (`replay` が必要に応じて自動パスを挟むため)。
-- `MAX_PLIES = 128` の固定長配列に履歴を持つ。実際の上限は 60 手 + パスなので十分。
+- 手番側から見たスコア。マスを種類ごとに bitmask にまとめ (角 100 / X -50 / C -20 / A 10 /
+  B 5 / 内周 -2 / 中央 -1)、`popcount(own & mask) - popcount(opp & mask)` の加重和を取ります。
+  64 マスのループは持ちません。
+- 角が埋まったら、その隣の X・C マスの罰則を打ち消します。角を取られた後の X は危険ではないためです。
+- 着手可能数の差 x 8。終局は石差 x 1000 (`RV_SCORE_DISC`) で、静的評価を必ず上回ります。
+- 反転対称 (`eval(b) == -eval(swap(b))`) をランダム局面で確認しています。
+- 重みは手で置いたもので、学習はしていません。それでも「深く読むほど勝つ」順序は保たれています。
 
-## 評価関数 (段階 3)
+## 置換表
 
-- 手番側から見たスコア。マスを重み別の bitmask (角 100 / X -50 / C -20 / A 10 / B 5 / 内周 -2 / 中央 -1)
-  に分け、`popcount(own & mask) - popcount(opp & mask)` の加重和で求める。64 マスのループを持たない。
-- 角が埋まったら、その角に隣接する X / C マスのペナルティを打ち消す (角が取られた後の X は危険ではない)。
-- 着手可能数の差 × 8。終局は石差 × 1000 (`RV_SCORE_DISC`) で、静的評価を必ず支配する。
-- 反転対称 (`eval(b) == -eval(swap(b))`) をランダム局面でテストしている。
+- ハッシュは Zobrist ではなく、`own` と `opp` を splitmix64 の finalizer で混ぜたものです。
+  表が要らず O(1) で、局面構造体から直接計算できます。手番側視点の bitboard がそのまま鍵なので、
+  同じ形は手番に関係なく同じエントリに当たります (Reversi のルールは色対称)。
+- エントリには `own` / `opp` を丸ごと入れ、完全一致でだけ hit とします。偽ヒットは原理的に起きません。
+  代わりに 1 エントリ 24 バイトで、2^18 エントリで 6 MiB の静的配列です (`RV_TT_BITS`)。
+- 置き換えは「同じ局面でより浅い結果は上書きしない」以外は常に上書きです。
+- 値に使うのは同じ深さのエントリだけです。深いエントリは手順前後にだけ使います。
+  深い結果を値に使う方が強いのですが、そうすると固定深さの評価値が表の中身で変わり、
+  参照探索との一致テストが成り立たなくなります。検証できることを優先しました。切り替えは 1 行です。
 
-## 探索 (段階 3)
+## 時間制御
 
-- negamax + αβ。パスは深さを消費しない (両者パスは終局として石差を返す)。
-- 手順前後: 角 → 普通のマス → C → X の 4 バケツ順に探索する。反復深化では前回の最善手を最初に読む。
-- 深さは `empties` で頭打ちにするので、終盤は自然に完全読みになる (石差で確定したスコア)。
-- 正しさの根拠: 枝刈りなしの参照 negamax (テスト内に実装) とランダム局面 40 件で深さ 3 のスコアが一致、
-  残り 8 マス以下の局面 15 件で完全読みのスコアが一致。
-## 置換表と時間制御 (段階 4)
+- 反復深化 + 4096 ノードごとの時計確認。締切を過ぎたら探索を中断し、直前に完了した深さの結果を使います。
+  中断した反復の結果は置換表にも書きません。
+- 時計は C11 の `timespec_get(TIME_UTC)`。使えない環境では `clock()` に落ちます。
 
-- ハッシュは Zobrist ではなく `own` / `opp` を splitmix64 の finalizer で混ぜたもの。テーブル不要で
-  O(1)、局面構造体から直接計算できる。手番側視点の bitboard をそのまま鍵にするので、同じ形は
-  手番に関係なく同じエントリに当たる (Reversi のルールは色対称)。
-- エントリは `own` / `opp` を丸ごと持ち、hit は完全一致のみ。偽ヒットが原理的に起きない代わりに
-  1 エントリ 24 バイト。2^18 エントリで 6 MiB の静的配列。`RV_TT_BITS` で変更できる。
-- 置換は「同じ局面でより浅い結果は上書きしない」以外は常に上書き。
-- **値に使うのは同じ深さのエントリだけ**。深いエントリは手順前後にのみ使う。これにより固定深さの
-  評価値が置換表の有無で変わらず、枝刈りなし参照 negamax との一致テストがそのまま効く。
-  (深いエントリを値に使う方が強いが、検証可能性を優先した。切り替えは 1 行。)
-- 時間制御は反復深化 + 4096 ノードごとの時計確認。締切を過ぎたら探索を中断し、
-  直前に完了した深さの結果を使う。中断した反復の結果は置換表にも書かない。
-- 時計は C11 の `timespec_get(TIME_UTC)`。使えない環境では `clock()` に落ちる。
-- 終盤完全読みは、深さを空きマス数で頭打ちにしているので別コードなしに到達する。
-  `rv_search_result.exact` が真なら石差で確定した値。
+## テスト方針
 
-## メモリと移植性
+- `tests/minitest.h` はカウンタと 2 つのマクロだけ。動的登録も setjmp もありません。
+- `tests/test_*.c` はそれぞれ独立した実行ファイルで、`make test` が全部回して最初の失敗で止まります。
+- 構造体の等値比較は `memcmp` ではなくフィールドで行います。`rv_board` は enum の後ろに
+  パディングがあり、CI の valgrind が未初期化読みとして検出しました。
+- 乱数は `rand()` ではなく自前の xorshift64* です。シードを固定すればどの libc でも同じ棋譜になり、
+  自己対戦のテストが決定的になります。
 
-- `src/*.c` でヒープ確保をしない。`rv_board` は探索中に値コピーする。
-- コンパイラ拡張は `#if defined(__GNUC__)` の内側のみ (`popcount` / `ctz` は移植可能な代替あり)。
-- `printf` 系は盤面整形と CLI だけ。
+## 性能の記録
 
-## テスト
+Apple M 系 1 コア、`-O2`。
 
-- `tests/minitest.h` はカウンタと 2 つのマクロのみ。動的登録も setjmp もない。
-- `tests/test_*.c` はそれぞれ独立した実行ファイル。`make test` が全部回し、最初の失敗で止まる。
-- 構造体の等値比較は `memcmp` ではなくフィールドで行う。`rv_board` には enum の後ろに
-  パディングがあり、valgrind が未初期化読みとして検出した。
+| 変更 | perft(10) | ab8 vs ab6 20 局 |
+|---|---:|---:|
+| 初版 (6 回シフト、置換表なし) | 0.91 s (26 M/s) | 19.1 s |
+| 置換表 | 同じ | 4.4 s |
+| Kogge-Stone 充填 | 0.51 s (48 M/s) | 3.1 s |
+
+探索は 8 手読み x 20 局面で 12 M ノード/秒 (`make bench`)。エンジンのコードサイズは `-Os` で約 7 KB
+(置換表を除く)。
+
+## 今後の活用
+
+エンジンは UI にも OS にも依存していないので、そのまま別の場所へ持っていけます。
+やるならこの順が自然だと考えています。
+
+### 1. マイコンへの移植
+
+- 必要なのは `src/*.c` のうち CLI 以外と `include/`。`printf` を使うのは盤面整形だけです。
+- RAM の見積もり: 局面 24 バイト、探索の再帰は最大 60 段で数 KB、置換表は `RV_TT_BITS=10` で 24 KB。
+  Cortex-M4 (RAM 64 KB 程度) で十分収まります。置換表を外せば 10 KB 未満です。
+- コードは `-Os` で約 7 KB。`popcount` / `ctz` は GCC 拡張を使っていますが、`#if` の外側に
+  移植可能な実装があるので、どのコンパイラでもビルドできます。
+- 実機で動かすなら、UART 経由で盤面と手をやり取りする薄い層を足すだけです。
+  「PC の CLI と同じコードがマイコンでも同じ手を返す」ことが一番分かりやすいデモになります。
+
+### 2. ブラウザ対局 (WASM)
+
+- Emscripten で `rv_search_timed` など数個の関数を公開し、TypeScript の薄い盤面 UI から呼びます。
+- このリポジトリには入れず別リポにします。UI コードが混ざるとリポジトリの言語構成が崩れ、
+  依存ゼロの前提も変わるためです。
+
+### 3. 対戦プロトコル
+
+- 標準入出力で局面と手をやり取りするプロトコルを足すと、他のエンジンや GUI と接続できます。
+  形式は GTP (囲碁) の最小サブセットで十分です。
+- 公開されている強いエンジン (Edax など) と対戦すれば、自己対戦では測れない絶対的な強さが分かります。
+
+### 4. 評価関数の学習
+
+- `match` で大量の自己対戦棋譜を作り、終局の石差を目的変数にして重み (角・X・C・着手可能数) を
+  回帰で求めます。Logistello 以来の定番手法で、現在の手置きの重みをデータで置き換えられます。
+- 学習コードは Python でも構いませんが、学習した重みを読み込む側は今の `eval.c` のまま使えます。
+
+### 5. 教材として
+
+- 兄弟リポジトリ `algorithms-in-c` と同じ流儀 (1 テーマ 1 ファイル、テスト併置、依存なし) で書いて
+  あります。bitboard、αβ、置換表、時間制御はそれぞれ単独で読める大きさなので、
+  アルゴリズムの説明の題材にそのまま使えます。
 
 ---
 
 ## English
 
-Design decisions and the reasoning behind them. Newest entries go at the bottom of each section.
+Design decisions, performance log and future directions. The README gives the flow; this file
+gives the reasons.
 
-### Board representation
+### Goals and constraints
 
-- Two `uint64_t` bitboards, `own` and `opp`, always from the side-to-move's point of view, plus
-  a `side` tag so the caller can recover absolute colors. Making a move swaps the two words.
-  Search code therefore never branches on color.
-- Square index is `rank * 8 + file`, `a1 = 0`, `h8 = 63`. Ranks run top to bottom as printed,
-  which matches standard Othello notation (`f5` is the usual first move).
-- Direction shifts mask off the wrapped file (`~FILE_A` after an east-going shift, `~FILE_H`
-  after a west-going shift). North/south shifts fall off the end of the word naturally.
+The repository exists to put embedded-style C in public. Three constraints were set at the
+start and kept: no third-party code (the test framework is one header), no heap in the engine
+(fixed arrays and value copies only), and mechanical correctness checks (reference perft counts,
+a pruning-free reference search, ASan/UBSan/valgrind). The no-heap rule is less about speed
+than about portability: RAM use is known at link time.
 
-### Move generation and flipping
+### Board
 
-- Legal moves: for each of 8 directions, flood `own` through `opp` up to 6 times, then one more
-  shift onto an empty square. 8 x 7 shifts, no per-square loop.
-- Flips for a chosen square: same flood starting from the move bit; the run only counts if the
-  final shift lands on an `own` stone.
-- This is the simplest formulation that is correct and has no per-square loop. Kogge-Stone style
-  parallel-prefix versions are faster and may replace it in the benchmark stage.
+Two `uint64_t` bitboards, `own` and `opp`, always from the side to move, plus a `side` tag.
+A move flips and swaps, so the search never branches on color. Square index is
+`rank * 8 + file`, `a1 = 0`. Positions are 24 bytes and are copied rather than undone, which
+removes the classic undo bug by construction.
 
-### Perft semantics
+### Move generation (Kogge-Stone)
 
-- `perft(0) = 1`.
-- If the side to move has no legal move but the opponent does, the pass consumes one ply.
-- If neither side can move, the position is one leaf regardless of remaining depth.
-- With these rules the counts match the reference sequence
-  4, 12, 56, 244, 1396, 8200, 55092, 390216, 3005288, 24571284 (depth 1 to 10).
-  Depth 10 is the first depth where both the pass rule and the terminal rule matter
-  (the shortest possible game is 9 plies), so matching it pins both choices.
+The "run of opponent stones ending in an own stone" condition is evaluated for all 64 squares at
+once per direction with an occluded fill: shifts of 1, 2 and 4 cover a run of up to 6 stones,
+half the shifts of the original 6-step loop. A shift of n squares masks off n files on the
+wrapping side. Perft counts 1 to 10 are identical before and after the change.
 
-### Players (stage 2)
+### Perft
 
-- `random` uses an in-tree xorshift64* rather than `rand()`, so a given seed produces the same
-  game on every libc (needed for reproducible tests and later self-play).
-- `greedy` picks the move with the most flips, lowest square on ties. It stays as the baseline
-  for search.
-- Both return `RV_PASS` when there is no legal move; the caller decides how to pass.
+`perft(0) = 1`; a forced pass is one ply; a finished game is one leaf regardless of remaining
+depth. Depths 1 to 10 match the reference sequence ending in 24,571,284. The shortest game is 9
+plies, so depth 10 is the first where the pass and terminal rules matter, which pins them.
 
-### CLI
+### Search
 
-- Board shows `X` black, `O` white, `.` legal move, `-` empty. A side with no move passes
-  automatically and says so.
-- Transcript is the concatenated string `f5d6c3...`. Passes are not recorded; `replay` inserts
-  them when needed.
-- History lives in a fixed `MAX_PLIES = 128` array; the real bound is 60 moves plus passes.
+Negamax with alpha-beta. A pass does not consume depth, so the value of (position, depth) is
+path-independent, which the table and the reference comparison require. Ordering: corners,
+plain squares, C squares, X squares; iterative deepening seeds the previous best move. Depth is
+capped at the number of empties, so the endgame is solved by the same code and flagged `exact`.
+Verified against a pruning-free negamax on 40 random positions at depth 3 and 15 exact solves
+with 8 or fewer empties.
 
-### Evaluation (stage 3)
+### Evaluation
 
-- Score from the side to move. Squares are grouped into weight-class bitmasks (corner 100 / X -50 /
-  C -20 / A 10 / B 5 / inner ring -2 / center -1) and summed as
-  `popcount(own & mask) - popcount(opp & mask)`. No 64-square loop.
-- Once a corner is occupied, the X and C penalties next to it are cancelled.
-- Mobility difference x 8. Finished games score disc difference x 1000 (`RV_SCORE_DISC`), which
-  always dominates the static terms.
-- Antisymmetry (`eval(b) == -eval(swap(b))`) is tested on random positions.
+Weighted square-class bitmasks (corner 100 / X -50 / C -20 / A 10 / B 5 / inner -2 /
+center -1) summed as popcount differences, no 64-square loop; X and C penalties lifted once the
+adjacent corner is taken; mobility x 8; finished games disc difference x 1000. Antisymmetry is
+tested on random positions. Weights are hand-set, not learned.
 
-### Search (stage 3)
+### Transposition table
 
-- Negamax with alpha-beta. A pass does not consume depth; two passes are a terminal node.
-- Move ordering in four buckets: corners, ordinary squares, C squares, X squares. Iterative
-  deepening searches the previous best move first at the root.
-- Depth is capped at the number of empties, so the endgame becomes an exact solve with a
-  disc-difference score.
-- Correctness: a pruning-free reference negamax (in the test file) agrees on 40 random positions at
-  depth 3 and on 15 exact solves with 8 or fewer empties.
-### Transposition table and time control (stage 4)
+Hash: splitmix64 finaliser over `own` and `opp`, no Zobrist table. Entries hold the full
+position and hit only on exact match, so collisions can only miss (24 bytes per entry, 2^18
+entries, `RV_TT_BITS`). A shallower result never replaces a deeper one. Only same-depth entries
+supply values; deeper ones only seed ordering. Using deeper values would be stronger but would
+make fixed-depth scores depend on table contents and break the reference test. Verifiability won.
 
-- The hash is not Zobrist: `own` and `opp` go through the splitmix64 finaliser. No table, O(1),
-  computed straight from the position struct. Because the bitboards are side-relative, the same
-  shape hits the same entry whichever colour is to move (Reversi is colour-symmetric).
-- An entry stores the full `own` / `opp`, and a hit requires an exact match, so a false hit is
-  impossible. The cost is 24 bytes per entry; 2^18 entries is a 6 MiB static array
-  (`RV_TT_BITS`).
-- Replacement: always overwrite, except that a shallower result never replaces a deeper one for
-  the same position.
-- **Only same-depth entries are used for values**; deeper ones only seed move ordering. This keeps
-  fixed-depth scores identical with or without the table, so the pruning-free reference test still
-  applies. (Using deeper entries would be stronger; verifiability won. It is a one-line switch.)
-- Time control is iterative deepening with a clock check every 4096 nodes. Past the deadline the
-  search aborts and the last completed depth is used; the aborted iteration is not written to the
-  table.
-- The clock is C11 `timespec_get(TIME_UTC)` with a `clock()` fallback.
-- The endgame solver is not separate code: depth is capped at the number of empties, so the
-  search reaches it on its own. `rv_search_result.exact` marks a disc-difference score.
+### Time control
 
-### Memory and portability rules
-
-- No heap allocation anywhere in `src/*.c`. `rv_board` is copied by value during search.
-- No compiler extensions outside `#if defined(__GNUC__)` guards (`popcount`, `ctz` have
-  portable fallbacks).
-- `printf`-family only in the board formatter and the CLI.
+Iterative deepening with a clock check every 4096 nodes; past the deadline the search aborts
+and the last completed depth is used; aborted iterations are not stored. Clock is C11
+`timespec_get` with a `clock()` fallback.
 
 ### Testing
 
-- `tests/minitest.h`: counters plus two macros. No dynamic registration, no setjmp, so it also
-  works where a full framework would not.
-- Each `tests/test_*.c` is its own executable; `make test` runs them all and stops at the first
-  failure.
-- Struct equality is checked field by field, never with `memcmp`: `rv_board` has padding after
-  the enum and valgrind flagged the uninitialised read.
+One-header framework, one executable per test file, field-by-field struct comparison (valgrind
+caught a padding read through `memcmp`), in-tree xorshift64* so seeded self-play is
+deterministic on every libc.
+
+### Performance log
+
+Apple M-series core, `-O2`: perft(10) 0.91 s to 0.51 s (26 to 48 M leaves/s) with Kogge-Stone;
+20-game ab8 vs ab6 match 19.1 s to 4.4 s with the table, to 3.1 s with the new generator; search
+12 M nodes/s at depth 8; engine code about 7 KB at `-Os`.
+
+### Where it can go
+
+1. **MCU port**: engine only, no `printf` outside the formatter; 24-byte position, a few KB of
+   stack, 24 KB table at `RV_TT_BITS=10`; fits a Cortex-M4. The best demo is the same code
+   returning the same moves over UART as on the PC.
+2. **WASM**: expose a handful of functions via Emscripten and drive them from a thin TypeScript
+   board, in a separate repository to keep this one dependency-free and C-only.
+3. **Match protocol**: a minimal GTP-style stdio protocol to play other engines and GUIs, which
+   gives absolute strength numbers against engines such as Edax.
+4. **Learned evaluation**: regress the weights on disc difference from self-play transcripts
+   (the Logistello approach); `eval.c` consumes the weights unchanged.
+5. **Teaching material**: each module (bitboard, alpha-beta, table, time control) reads on its
+   own, in the same style as the sibling `algorithms-in-c`.
