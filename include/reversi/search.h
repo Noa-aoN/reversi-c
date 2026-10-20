@@ -17,9 +17,12 @@ typedef struct rv_search_result {
     bool exact;
 } rv_search_result;
 
+typedef double (*rv_clock_fn)(void);
+
 void rv_search(const rv_board *b, int depth, rv_search_result *out);
 void rv_search_id(const rv_board *b, int max_depth, rv_search_result *out);
 void rv_search_timed(const rv_board *b, int max_depth, double seconds, rv_search_result *out);
 void rv_search_clear_tt(void);
+void rv_search_set_clock(rv_clock_fn now_seconds);
 
 #endif

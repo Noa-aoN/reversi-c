@@ -20,6 +20,12 @@ typedef struct player {
 #define DEFAULT_DEPTH 6
 #define DEFAULT_MS 1000
 
+static double wall_seconds(void) {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+
 static int usage(void) {
     fprintf(stderr,
             "usage: reversi play [black] [white] [seed]      player: human|random|greedy|ab[N]|t[MS]\n"
@@ -269,6 +275,7 @@ int main(int argc, char **argv) {
     if (argc < 2) {
         return usage();
     }
+    rv_search_set_clock(wall_seconds);
     if (strcmp(argv[1], "show") == 0 && argc == 2) {
         return cmd_show();
     }
