@@ -6,17 +6,54 @@
 #include "reversi/board.h"
 #include "reversi/perft.h"
 #include "reversi/player.h"
+#include "reversi/search.h"
 
-typedef enum player_kind { HUMAN, RANDOM, GREEDY } player_kind;
+typedef enum player_kind { HUMAN, RANDOM, GREEDY, AB } player_kind;
+
+typedef struct player {
+    player_kind kind;
+    int depth;
+} player;
 
 #define MAX_PLIES 128
+#define DEFAULT_DEPTH 6
 
 static int usage(void) {
-    fprintf(stderr, "usage: reversi play [black] [white] [seed]   player: human|random|greedy\n"
-                    "       reversi replay <moves>              e.g. f5d6c3d3c4\n"
-                    "       reversi show\n"
-                    "       reversi perft <depth>\n");
+    fprintf(stderr,
+            "usage: reversi play [black] [white] [seed]      player: human|random|greedy|ab[N]\n"
+            "       reversi match <a> <b> <games> [seed]     self-play, colors alternate\n"
+            "       reversi replay <moves>                   e.g. f5d6c3d3c4\n"
+            "       reversi show\n"
+            "       reversi perft <depth>\n");
     return 2;
+}
+
+static int parse_player(const char *s, player *out) {
+    if (strcmp(s, "human") == 0) {
+        out->kind = HUMAN;
+    } else if (strcmp(s, "random") == 0) {
+        out->kind = RANDOM;
+    } else if (strcmp(s, "greedy") == 0) {
+        out->kind = GREEDY;
+    } else if (strncmp(s, "ab", 2) == 0) {
+        out->kind = AB;
+        out->depth = s[2] ? atoi(s + 2) : DEFAULT_DEPTH;
+        if (out->depth < 1 || out->depth > RV_SEARCH_MAX_DEPTH) {
+            return 0;
+        }
+    } else {
+        return 0;
+    }
+    return 1;
+}
+
+static void describe(const player *p, char *out, size_t cap) {
+    static const char *names[] = {"human", "random", "greedy", "ab"};
+    if (p->kind == AB) {
+        snprintf(out, cap, "ab%d", p->depth);
+    } else {
+        snprintf(out, cap, "%s", names[p->kind]);
+    }
 }
 
 static void print_board(const rv_board *b) {
@@ -71,29 +108,36 @@ static int read_human_move(const rv_board *b) {
     }
 }
 
-static int parse_kind(const char *s, player_kind *out) {
-    if (strcmp(s, "human") == 0) {
-        *out = HUMAN;
-    } else if (strcmp(s, "random") == 0) {
-        *out = RANDOM;
-    } else if (strcmp(s, "greedy") == 0) {
-        *out = GREEDY;
-    } else {
-        return 0;
+static int pick_move(const player *p, const rv_board *b, rv_rng *rng, int verbose) {
+    rv_search_result res;
+    switch (p->kind) {
+    case HUMAN:
+        return read_human_move(b);
+    case RANDOM:
+        return rv_pick_random(b, rng);
+    case GREEDY:
+        return rv_pick_greedy(b);
+    default:
+        rv_search_id(b, p->depth, &res);
+        if (verbose) {
+            printf("depth %d  score %+d  nodes %llu\n", res.depth, res.score,
+                   (unsigned long long)res.nodes);
+        }
+        return res.move;
     }
-    return 1;
 }
 
-static int cmd_play(player_kind kinds[2], uint64_t seed) {
-    static const char *names[] = {"human", "random", "greedy"};
+static int cmd_play(const player players[2], uint64_t seed) {
+    char names[2][16];
     rv_board b;
     rv_rng rng;
     int history[MAX_PLIES];
     int n = 0;
+    describe(&players[RV_BLACK], names[0], sizeof names[0]);
+    describe(&players[RV_WHITE], names[1], sizeof names[1]);
     rv_board_init(&b);
     rv_rng_seed(&rng, seed);
-    printf("X: %s  O: %s  (type a square like f5, or quit)\n", names[kinds[RV_BLACK]],
-           names[kinds[RV_WHITE]]);
+    printf("X: %s  O: %s  (type a square like f5, or quit)\n", names[0], names[1]);
     while (!rv_board_is_over(&b) && n < MAX_PLIES) {
         print_board(&b);
         if (rv_board_moves(&b) == 0) {
@@ -101,18 +145,7 @@ static int cmd_play(player_kind kinds[2], uint64_t seed) {
             rv_board_pass(&b);
             continue;
         }
-        int sq;
-        switch (kinds[b.side]) {
-        case HUMAN:
-            sq = read_human_move(&b);
-            break;
-        case RANDOM:
-            sq = rv_pick_random(&b, &rng);
-            break;
-        default:
-            sq = rv_pick_greedy(&b);
-            break;
-        }
+        int sq = pick_move(&players[b.side], &b, &rng, 1);
         if (sq == -2) {
             print_transcript(history, n);
             return 0;
@@ -126,6 +159,46 @@ static int cmd_play(player_kind kinds[2], uint64_t seed) {
     print_board(&b);
     print_result(&b);
     print_transcript(history, n);
+    return 0;
+}
+
+static int cmd_match(const player *a, const player *bp, int games, uint64_t seed) {
+    char na[16], nb[16];
+    rv_rng rng;
+    int wins = 0, draws = 0, losses = 0;
+    int discs_a = 0, discs_b = 0;
+    describe(a, na, sizeof na);
+    describe(bp, nb, sizeof nb);
+    rv_rng_seed(&rng, seed);
+    for (int g = 0; g < games; g++) {
+        rv_board b;
+        rv_color a_color = (g % 2 == 0) ? RV_BLACK : RV_WHITE;
+        rv_board_init(&b);
+        for (int i = 0; i < 4 && !rv_board_is_over(&b); i++) {
+            rv_board_play(&b, rv_pick_random(&b, &rng));
+        }
+        while (!rv_board_is_over(&b)) {
+            if (rv_board_moves(&b) == 0) {
+                rv_board_pass(&b);
+                continue;
+            }
+            const player *p = (b.side == a_color) ? a : bp;
+            rv_board_play(&b, pick_move(p, &b, &rng, 0));
+        }
+        int ca = rv_board_count(&b, a_color);
+        int cb = rv_board_count(&b, a_color == RV_BLACK ? RV_WHITE : RV_BLACK);
+        discs_a += ca;
+        discs_b += cb;
+        if (ca > cb) {
+            wins++;
+        } else if (ca < cb) {
+            losses++;
+        } else {
+            draws++;
+        }
+    }
+    printf("%s vs %s: %d games  W %d  D %d  L %d  (%.1f%%)  discs %d:%d\n", na, nb, games, wins,
+           draws, losses, (wins + 0.5 * draws) * 100.0 / games, discs_a, discs_b);
     return 0;
 }
 
@@ -190,15 +263,25 @@ int main(int argc, char **argv) {
         return cmd_replay(argv[2]);
     }
     if (strcmp(argv[1], "play") == 0 && argc <= 5) {
-        player_kind kinds[2] = {HUMAN, GREEDY};
-        if (argc >= 3 && !parse_kind(argv[2], &kinds[RV_BLACK])) {
+        player players[2] = {{HUMAN, 0}, {AB, DEFAULT_DEPTH}};
+        if (argc >= 3 && !parse_player(argv[2], &players[RV_BLACK])) {
             return usage();
         }
-        if (argc >= 4 && !parse_kind(argv[3], &kinds[RV_WHITE])) {
+        if (argc >= 4 && !parse_player(argv[3], &players[RV_WHITE])) {
             return usage();
         }
         uint64_t seed = (argc == 5) ? strtoull(argv[4], NULL, 10) : (uint64_t)time(NULL);
-        return cmd_play(kinds, seed);
+        return cmd_play(players, seed);
+    }
+    if (strcmp(argv[1], "match") == 0 && (argc == 5 || argc == 6)) {
+        player a, b;
+        int games = atoi(argv[4]);
+        if (!parse_player(argv[2], &a) || !parse_player(argv[3], &b) || games < 1 ||
+            a.kind == HUMAN || b.kind == HUMAN) {
+            return usage();
+        }
+        uint64_t seed = (argc == 6) ? strtoull(argv[5], NULL, 10) : (uint64_t)time(NULL);
+        return cmd_match(&a, &b, games, seed);
     }
     return usage();
 }
