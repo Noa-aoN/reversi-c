@@ -13,7 +13,7 @@
 |---|---|---|
 | 1 | bitboard、合法手生成、perft | 済 |
 | 2 | CLI 対局 (人 / random / greedy)、棋譜の出力と再生 | 済 |
-| 3 | negamax + αβ、反復深化、評価関数 | 予定 |
+| 3 | negamax + αβ、反復深化、評価関数、自己対戦 | 済 |
 | 4 | 終盤完全読み、置換表、時間制御 | 予定 |
 | 5 | ベンチマークと自己対戦の数値 | 予定 |
 
@@ -21,14 +21,16 @@
 
 ```sh
 make                                  # build/reversi
-./build/reversi play                  # 自分 (黒 X) vs greedy (白 O)
+./build/reversi play                  # 自分 (黒 X) vs ab6 (白 O、αβ 探索 6 手読み)
 ./build/reversi play human human      # 人 vs 人
-./build/reversi play random greedy 42 # AI 同士。第 3 引数は乱数シード
+./build/reversi play ab4 greedy 42    # AI 同士。第 3 引数は乱数シード
+./build/reversi match ab6 greedy 40 1 # 自己対戦 40 局 (先後交互、序盤 4 手はランダム)
 ./build/reversi replay f5d6c3d3c4     # 棋譜を再生して局面を表示
 ./build/reversi show                  # 初期局面と合法手
 ./build/reversi perft 9
 ```
 
+プレイヤーは `human` / `random` / `greedy` (反転数最大) / `ab[N]` (αβ 探索、N 手読み、既定 6)。
 対局中は `f5` のようにマス目を入力する。`.` が合法手、`X` が黒、`O` が白。`quit` で中断。
 打てる手がない側は自動でパスする。終局時に勝敗と棋譜 (`moves: f5d6c3...`) を表示し、
 その棋譜は `replay` にそのまま渡せる。
@@ -53,6 +55,23 @@ make test       # 単体テスト + perft(0..9)
 make asan       # 同じテストを AddressSanitizer + UBSan で
 make bench      # perft(10) のスループット
 ```
+
+## 強さ
+
+`match` による自己対戦 (40 局、seed 1、先後交互、序盤 4 手ランダム)。
+左側のプレイヤーから見た勝率 (引き分けは 0.5)。
+
+| 対戦 | 勝率 | 石数 |
+|---|---:|---:|
+| ab4 vs greedy | 100% | 2088 : 453 |
+| ab6 vs greedy | 100% | 2184 : 340 |
+| ab6 vs random | 100% | 2129 : 412 |
+| ab6 vs ab2 | 97.5% | 2073 : 480 |
+| ab6 vs ab4 | 75.0% | 1634 : 916 |
+| ab8 vs ab6 (20 局) | 67.5% | 765 : 514 |
+
+深さを上げるほど勝つ、という単調性が保たれている。評価関数は角 / X / C マスの重み付け、
+角が埋まったときの X・C ペナルティ解除、着手可能数の差。終局は石差で評価する。
 
 ## 設計上の制約
 
@@ -87,7 +106,7 @@ make bench      # perft(10) のスループット
 ## 構成
 
 ```
-include/reversi/   公開ヘッダ (bitboard, movegen, board, perft, player)
+include/reversi/   公開ヘッダ (bitboard, movegen, board, perft, player, eval, search)
 src/               エンジン
 src/cli/           コマンドラインのフロントエンド
 tests/             minitest.h + test_*.c
@@ -112,7 +131,7 @@ allocation in the engine, and every piece of game logic is pinned down by perft.
 |---|---|---|
 | 1 | Bitboard, move generation, perft | done |
 | 2 | CLI play (human / random / greedy), transcript output and replay | done |
-| 3 | Negamax + alpha-beta, iterative deepening, evaluation | planned |
+| 3 | Negamax + alpha-beta, iterative deepening, evaluation, self-play | done |
 | 4 | Endgame exact solver, transposition table, time control | planned |
 | 5 | Benchmarks and self-play results | planned |
 
@@ -120,14 +139,16 @@ allocation in the engine, and every piece of game logic is pinned down by perft.
 
 ```sh
 make                                  # build/reversi
-./build/reversi play                  # you (black, X) vs greedy (white, O)
+./build/reversi play                  # you (black, X) vs ab6 (white, O, alpha-beta, 6 plies)
 ./build/reversi play human human
-./build/reversi play random greedy 42 # engine vs engine; third arg is the RNG seed
+./build/reversi play ab4 greedy 42    # engine vs engine; third arg is the RNG seed
+./build/reversi match ab6 greedy 40 1 # 40-game self-play, colors alternate, 4 random opening plies
 ./build/reversi replay f5d6c3d3c4     # replay a transcript and show the position
 ./build/reversi show                  # initial position with legal moves
 ./build/reversi perft 9
 ```
 
+Players are `human`, `random`, `greedy` (most flips) and `ab[N]` (alpha-beta, N plies, default 6).
 Enter squares like `f5`. `.` marks legal moves, `X` is black, `O` is white, `quit` stops the game.
 A side with no legal move passes automatically. At the end the result and the transcript
 (`moves: f5d6c3...`) are printed; the transcript can be fed straight back into `replay`.
@@ -137,6 +158,23 @@ make test       # unit tests + perft(0..9)
 make asan       # same tests under AddressSanitizer + UBSan
 make bench      # perft(10) throughput
 ```
+
+### Strength
+
+Self-play through `match` (40 games, seed 1, colors alternate, 4 random opening plies).
+Win rate is for the left-hand player, draws count 0.5.
+
+| Match | Win rate | Discs |
+|---|---:|---:|
+| ab4 vs greedy | 100% | 2088 : 453 |
+| ab6 vs greedy | 100% | 2184 : 340 |
+| ab6 vs random | 100% | 2129 : 412 |
+| ab6 vs ab2 | 97.5% | 2073 : 480 |
+| ab6 vs ab4 | 75.0% | 1634 : 916 |
+| ab8 vs ab6 (20 games) | 67.5% | 765 : 514 |
+
+Deeper search wins, monotonically. The evaluation weights corners, X and C squares (penalties
+lifted once the adjacent corner is taken) and mobility; finished games are scored by disc difference.
 
 ### Design constraints
 
@@ -157,7 +195,7 @@ a finished game is one leaf. Depths 1 to 10 match the published reference values
 ### Layout
 
 ```
-include/reversi/   public headers (bitboard, movegen, board, perft, player)
+include/reversi/   public headers (bitboard, movegen, board, perft, player, eval, search)
 src/               engine
 src/cli/           command-line front end
 tests/             minitest.h + test_*.c
