@@ -67,6 +67,7 @@ void rv_board_format(const rv_board *b, char *out, size_t cap) {
         }
         n += (size_t)snprintf(out + n, cap - n, "\n");
     }
-    snprintf(out + n, cap - n, "%s to move  X:%d O:%d\n", b->side == RV_BLACK ? "X" : "O",
-             rv_popcount(black), rv_popcount(white));
+    const char *turn =
+        rv_board_is_over(b) ? "game over" : (b->side == RV_BLACK ? "X to move" : "O to move");
+    snprintf(out + n, cap - n, "%s  X:%d O:%d\n", turn, rv_popcount(black), rv_popcount(white));
 }

@@ -57,6 +57,7 @@ static void test_pass_only_when_no_moves(void) {
 static void test_shortest_game(void) {
     static const char *moves[] = {"e6", "f4", "e3", "f6", "g5", "d6", "e7", "f5", "c5"};
     rv_board b;
+    char buf[RV_BOARD_STR_CAP];
     rv_board_init(&b);
     for (size_t i = 0; i < sizeof moves / sizeof moves[0]; i++) {
         MT_CHECK(rv_board_play(&b, SQ(moves[i])));
@@ -64,6 +65,8 @@ static void test_shortest_game(void) {
     MT_CHECK(rv_board_is_over(&b));
     MT_CHECK(rv_board_count(&b, RV_BLACK) == 13);
     MT_CHECK(rv_board_count(&b, RV_WHITE) == 0);
+    rv_board_format(&b, buf, sizeof buf);
+    MT_CHECK(strstr(buf, "game over  X:13 O:0\n") != NULL);
 }
 
 static void test_format(void) {
