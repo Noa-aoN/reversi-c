@@ -25,6 +25,9 @@
 - 局面は 24 バイトなので、探索中は undo を持たず値コピーで子局面を作ります。
   undo の実装ミスという定番のバグをそもそも作らない選択です。
 
+- `rv_board_format` / `rv_board_parse` で盤面テキストと相互に変換できます。テストでは局面を bitboard の OR ではなく
+  盤面の絵で書けます。
+
 ## 合法手生成 (Kogge-Stone)
 
 - 「相手石が続き、その先に自分の石」という条件を 8 方向分、bitboard 全体に対して一度に求めます。
@@ -178,7 +181,8 @@ than about portability: RAM use is known at link time.
 Two `uint64_t` bitboards, `own` and `opp`, always from the side to move, plus a `side` tag.
 A move flips and swaps, so the search never branches on color. Square index is
 `rank * 8 + file`, `a1 = 0`. Positions are 24 bytes and are copied rather than undone, which
-removes the classic undo bug by construction.
+removes the classic undo bug by construction. `rv_board_format` and `rv_board_parse` convert to and from the
+board diagram, so tests can spell out positions as pictures.
 
 ### Move generation (Kogge-Stone)
 

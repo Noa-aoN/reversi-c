@@ -71,3 +71,30 @@ void rv_board_format(const rv_board *b, char *out, size_t cap) {
         rv_board_is_over(b) ? "game over" : (b->side == RV_BLACK ? "X to move" : "O to move");
     snprintf(out + n, cap - n, "%s  X:%d O:%d\n", turn, rv_popcount(black), rv_popcount(white));
 }
+
+/* Reads the 64 cells back from the format above (or any text with X / O for
+ * stones and . / - for empties, left to right, rank 1 first); every other
+ * character is skipped, which lets the header, rank labels and the legal-move
+ * dots pass through. The side to move is not in the diagram, so it is passed. */
+bool rv_board_parse(rv_board *b, const char *s, rv_color side) {
+    rv_bb black = 0, white = 0;
+    int cells = 0;
+    for (; *s != '\0' && cells < RV_SQUARES; s++) {
+        rv_bb bit = RV_BB(cells);
+        if (*s == 'X') {
+            black |= bit;
+        } else if (*s == 'O') {
+            white |= bit;
+        } else if (*s != '.' && *s != '-') {
+            continue;
+        }
+        cells++;
+    }
+    if (cells != RV_SQUARES) {
+        return false;
+    }
+    b->own = side == RV_BLACK ? black : white;
+    b->opp = side == RV_BLACK ? white : black;
+    b->side = side;
+    return true;
+}
