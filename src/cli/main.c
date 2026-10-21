@@ -26,13 +26,16 @@ static double wall_seconds(void) {
     return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
+static const char usage_text[] =
+    "usage: reversi play [black] [white] [seed]      player: human|random|greedy|ab[N]|t[MS]\n"
+    "       reversi match <a> <b> <games> [seed]     self-play, colors alternate\n"
+    "       reversi replay <moves>                   e.g. f5d6c3d3c4\n"
+    "       reversi show\n"
+    "       reversi perft <depth>\n"
+    "       reversi help\n";
+
 static int usage(void) {
-    fprintf(stderr,
-            "usage: reversi play [black] [white] [seed]      player: human|random|greedy|ab[N]|t[MS]\n"
-            "       reversi match <a> <b> <games> [seed]     self-play, colors alternate\n"
-            "       reversi replay <moves>                   e.g. f5d6c3d3c4\n"
-            "       reversi show\n"
-            "       reversi perft <depth>\n");
+    fputs(usage_text, stderr);
     return 2;
 }
 
@@ -274,6 +277,10 @@ static int cmd_perft(int depth) {
 int main(int argc, char **argv) {
     if (argc < 2) {
         return usage();
+    }
+    if ((strcmp(argv[1], "help") == 0 || strcmp(argv[1], "--help") == 0) && argc == 2) {
+        fputs(usage_text, stdout);
+        return 0;
     }
     rv_search_set_clock(wall_seconds);
     if (strcmp(argv[1], "show") == 0 && argc == 2) {
