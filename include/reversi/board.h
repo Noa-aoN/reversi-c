@@ -25,5 +25,6 @@ rv_bb rv_board_bits(const rv_board *b, rv_color c);
 int rv_board_count(const rv_board *b, rv_color c);
 int rv_board_empties(const rv_board *b);
 void rv_board_format(const rv_board *b, char *out, size_t cap);
+bool rv_board_parse(rv_board *b, const char *s, rv_color side);
 
 #endif

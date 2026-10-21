@@ -80,6 +80,38 @@ static void test_format(void) {
     MT_CHECK(strstr(buf, "X to move  X:2 O:2\n") != NULL);
 }
 
+static void test_parse_reads_format_back(void) {
+    rv_board b, parsed;
+    char text[RV_BOARD_STR_CAP];
+    rv_board_init(&b);
+    rv_board_play(&b, SQ("f5"));
+    rv_board_play(&b, SQ("d6"));
+    rv_board_play(&b, SQ("c3"));
+    rv_board_format(&b, text, sizeof text);
+    MT_CHECK(rv_board_parse(&parsed, text, b.side));
+    MT_CHECK(parsed.own == b.own && parsed.opp == b.opp && parsed.side == b.side);
+    MT_CHECK(rv_board_parse(&parsed, text, RV_BLACK));
+    MT_CHECK(parsed.own == rv_board_bits(&b, RV_BLACK) && parsed.opp == rv_board_bits(&b, RV_WHITE));
+}
+
+static void test_parse_hand_written_and_malformed(void) {
+    rv_board b;
+    const char *diagram = "X-------"
+                          "--------"
+                          "--------"
+                          "---XO---"
+                          "---OX---"
+                          "--------"
+                          "--------"
+                          "-------O";
+    MT_CHECK(rv_board_parse(&b, diagram, RV_WHITE));
+    MT_CHECK_EQ_U64(rv_board_bits(&b, RV_BLACK), B("a1") | B("d4") | B("e5"));
+    MT_CHECK_EQ_U64(rv_board_bits(&b, RV_WHITE), B("e4") | B("d5") | B("h8"));
+    MT_CHECK(b.side == RV_WHITE);
+    MT_CHECK(!rv_board_parse(&b, "X-------", RV_BLACK));
+    MT_CHECK(!rv_board_parse(&b, "", RV_BLACK));
+}
+
 int main(void) {
     MT_RUN(test_initial_position);
     MT_RUN(test_play_flips_and_switches_side);
@@ -87,5 +119,7 @@ int main(void) {
     MT_RUN(test_pass_only_when_no_moves);
     MT_RUN(test_shortest_game);
     MT_RUN(test_format);
+    MT_RUN(test_parse_reads_format_back);
+    MT_RUN(test_parse_hand_written_and_malformed);
     return mt_report("test_board");
 }
