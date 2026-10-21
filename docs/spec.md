@@ -96,6 +96,8 @@
   手元の Apple clang でも `cc --analyze` で同じ解析が走ります。
 - 構造体の等値比較は `memcmp` ではなくフィールドで行います。`rv_board` は enum の後ろに
   パディングがあり、CI の valgrind が未初期化読みとして検出しました。
+- 合法手生成と反転計算は、盤の上下反転・左右反転・180 度回転と可換であることをランダム局面で確認します。
+  perft は数しか見ないので、方向ごとのシフトとマスクの非対称なバグを別の角度から押さえるためです。
 - 乱数は `rand()` ではなく自前の xorshift64* です。シードを固定すればどの libc でも同じ棋譜になり、
   自己対戦のテストが決定的になります。
 
@@ -226,7 +228,9 @@ deterministically.
 
 One-header framework, one executable per test file, field-by-field struct comparison (valgrind
 caught a padding read through `memcmp`), in-tree xorshift64* so seeded self-play is
-deterministic on every libc. `make smoke` runs every CLI subcommand once; `make cross` compiles
+deterministic on every libc. Move generation and flips are checked to commute with the board's
+vertical flip, horizontal mirror and 180-degree rotation on random positions, since perft only
+compares counts. `make smoke` runs every CLI subcommand once; `make cross` compiles
 the engine for Cortex-M4 with arm-none-eabi-gcc and prints `size`, in CI as well. CI also runs
 cppcheck and clang's scan-build with zero findings.
 
