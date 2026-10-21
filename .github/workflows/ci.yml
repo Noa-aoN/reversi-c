@@ -28,3 +28,11 @@ jobs:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
       - run: make cross
+
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cppcheck clang-tools
+      - run: cppcheck --std=c11 --enable=warning,performance,portability --error-exitcode=1 -Iinclude -Itests src tests bench
+      - run: scan-build --status-bugs make all
