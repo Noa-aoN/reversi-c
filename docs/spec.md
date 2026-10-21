@@ -92,6 +92,8 @@
   単体テストで見るので、ここは引数の解釈と出力の形だけを見ます。
 - `make cross` は arm-none-eabi-gcc でエンジンだけを Cortex-M4 向けにコンパイルし、`size` を出します。
   CI でも回していて、移植性の主張をビルドで裏付けています。
+- 静的解析は cppcheck (`warning,performance,portability`) と clang の scan-build を CI でかけます。
+  手元の Apple clang でも `cc --analyze` で同じ解析が走ります。
 - 構造体の等値比較は `memcmp` ではなくフィールドで行います。`rv_board` は enum の後ろに
   パディングがあり、CI の valgrind が未初期化読みとして検出しました。
 - 乱数は `rand()` ではなく自前の xorshift64* です。シードを固定すればどの libc でも同じ棋譜になり、
@@ -225,7 +227,8 @@ deterministically.
 One-header framework, one executable per test file, field-by-field struct comparison (valgrind
 caught a padding read through `memcmp`), in-tree xorshift64* so seeded self-play is
 deterministic on every libc. `make smoke` runs every CLI subcommand once; `make cross` compiles
-the engine for Cortex-M4 with arm-none-eabi-gcc and prints `size`, in CI as well.
+the engine for Cortex-M4 with arm-none-eabi-gcc and prints `size`, in CI as well. CI also runs
+cppcheck and clang's scan-build with zero findings.
 
 ### Performance log
 
