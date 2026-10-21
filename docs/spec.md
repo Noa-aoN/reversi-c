@@ -42,6 +42,8 @@
 - この定義で参照列 4, 12, 56, 244, 1396, 8200, 55092, 390216, 3005288, 24571284 (1〜10 手) と
   一致します。最短の終局が 9 手なので、10 手目ではじめてパスと終局の扱いが数に現れます。
   10 手目まで一致したことで、定義そのものが固定されています。
+- `rv_perft_divide` (CLI では `divide <depth>`) は初手ごとの内訳を出します。数が合わないとき、
+  他エンジンの divide と突き合わせてどの手の先で差が出るかを絞り込むための定番の道具です。
 
 ## 探索
 
@@ -190,6 +192,8 @@ wrapping side. Perft counts 1 to 10 are identical before and after the change.
 `perft(0) = 1`; a forced pass is one ply; a finished game is one leaf regardless of remaining
 depth. Depths 1 to 10 match the reference sequence ending in 24,571,284. The shortest game is 9
 plies, so depth 10 is the first where the pass and terminal rules matter, which pins them.
+`rv_perft_divide` (CLI `divide <depth>`) splits the count by first move, the usual tool for
+locating a discrepancy against another engine.
 
 ### Search
 

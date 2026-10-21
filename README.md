@@ -28,6 +28,7 @@ make
 ./build/reversi play human human      # 人どうし
 ./build/reversi match ab6 greedy 40 1 # AI どうしを 40 局 (先後交互、序盤 4 手はランダム)
 ./build/reversi replay f5d6c3d3c4     # 棋譜を再生して局面を表示
+./build/reversi divide 3              # 初手ごとの perft 内訳
 ```
 
 ```
@@ -195,6 +196,7 @@ make
 ./build/reversi play human t500       # engine thinks 500 ms per move
 ./build/reversi match ab6 greedy 40 1 # 40-game self-play, colors alternate
 ./build/reversi replay f5d6c3d3c4     # replay a transcript
+./build/reversi divide 3              # perft split by first move
 ```
 
 Enter squares like `f5`; `.` marks legal moves; `quit` stops. Players: `random`, `greedy`,
