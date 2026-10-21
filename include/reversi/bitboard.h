@@ -62,6 +62,18 @@ static inline int rv_ctz(rv_bb b) {
 #endif
 }
 
+static inline rv_bb rv_flip_vertical(rv_bb b) {
+    b = ((b >> 8) & UINT64_C(0x00FF00FF00FF00FF)) | ((b & UINT64_C(0x00FF00FF00FF00FF)) << 8);
+    b = ((b >> 16) & UINT64_C(0x0000FFFF0000FFFF)) | ((b & UINT64_C(0x0000FFFF0000FFFF)) << 16);
+    return (b >> 32) | (b << 32);
+}
+
+static inline rv_bb rv_mirror_horizontal(rv_bb b) {
+    b = ((b >> 1) & UINT64_C(0x5555555555555555)) | ((b & UINT64_C(0x5555555555555555)) << 1);
+    b = ((b >> 2) & UINT64_C(0x3333333333333333)) | ((b & UINT64_C(0x3333333333333333)) << 2);
+    return ((b >> 4) & UINT64_C(0x0F0F0F0F0F0F0F0F)) | ((b & UINT64_C(0x0F0F0F0F0F0F0F0F)) << 4);
+}
+
 static inline int rv_sq(int file, int rank) { return rank * 8 + file; }
 static inline int rv_sq_file(int sq) { return sq & 7; }
 static inline int rv_sq_rank(int sq) { return sq >> 3; }
