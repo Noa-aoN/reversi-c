@@ -149,6 +149,7 @@ make cross      # arm-none-eabi-gcc で Cortex-M4 向けにエンジンをビル
 ```
 
 CI は gcc と clang でそれぞれ通常ビルドと ASan/UBSan ビルドを回し、さらに valgrind でも全テストを通します。
+静的解析 (cppcheck と clang の scan-build) も毎回かけ、指摘ゼロを維持しています。
 Cortex-M4 向けのクロスビルドも CI に入れていて、「マイコンに載る」が言葉だけにならないようにしています。
 テストはヘッダ 1 つの自作フレームワーク (`tests/minitest.h`) で、外部に依存しません。
 
@@ -230,8 +231,8 @@ Cortex-M4 at `-Os` the engine is 5.0 KB of code and 25 KB of RAM including the t
 ### Verification
 
 `make test` (unit tests, perft, reference search), `make smoke` (CLI), `make asan`, `make bench`,
-`make cross` (Cortex-M4 build). CI runs gcc and clang with and without ASan/UBSan, valgrind, and
-the cross build.
+`make cross` (Cortex-M4 build). CI runs gcc and clang with and without ASan/UBSan, valgrind,
+cppcheck and scan-build, and the cross build.
 
 ### Where it can go
 
