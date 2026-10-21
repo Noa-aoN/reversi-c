@@ -60,3 +60,5 @@ cross: $(CROSS_OBJ)
 
 clean:
 	rm -rf $(BUILD)
+
+.DELETE_ON_ERROR:
