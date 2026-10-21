@@ -4,6 +4,8 @@
 set -eu
 bin=${1:-build/reversi}
 
+"$bin" help | grep -q '^usage: reversi play'
+"$bin" --help >/dev/null
 "$bin" perft 5 | grep -q 'perft( 5) = *1396'
 "$bin" show | grep -q 'X to move  X:2 O:2'
 "$bin" replay f5d6c3d3c4 | grep -q 'O to move  X:6 O:3'
