@@ -32,6 +32,7 @@ static const char usage_text[] =
     "       reversi replay <moves>                   e.g. f5d6c3d3c4\n"
     "       reversi show\n"
     "       reversi perft <depth>\n"
+    "       reversi divide <depth>                  perft split by first move\n"
     "       reversi help\n";
 
 static int usage(void) {
@@ -274,6 +275,22 @@ static int cmd_perft(int depth) {
     return 0;
 }
 
+static int cmd_divide(int depth) {
+    rv_board b;
+    uint64_t per_move[RV_SQUARES];
+    char sq[3];
+    rv_board_init(&b);
+    uint64_t total = rv_perft_divide(&b, depth, per_move);
+    for (int i = 0; i < RV_SQUARES; i++) {
+        if (per_move[i] != 0) {
+            rv_sq_to_str(i, sq);
+            printf("%s %12llu\n", sq, (unsigned long long)per_move[i]);
+        }
+    }
+    printf("total %9llu\n", (unsigned long long)total);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         return usage();
@@ -289,6 +306,10 @@ int main(int argc, char **argv) {
     if (strcmp(argv[1], "perft") == 0 && argc == 3) {
         int depth = atoi(argv[2]);
         return (depth < 1 || depth > 20) ? usage() : cmd_perft(depth);
+    }
+    if (strcmp(argv[1], "divide") == 0 && argc == 3) {
+        int depth = atoi(argv[2]);
+        return (depth < 1 || depth > 20) ? usage() : cmd_divide(depth);
     }
     if (strcmp(argv[1], "replay") == 0 && argc == 3) {
         return cmd_replay(argv[2]);
